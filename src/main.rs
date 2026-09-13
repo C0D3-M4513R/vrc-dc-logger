@@ -38,6 +38,7 @@ fn main() -> anyhow::Result<()> {
 #[derive(Debug, serde_derive::Deserialize)]
 struct ConfigFile{
     configs: Box<[VRCConfig]>,
+    owner: serenity::model::id::UserId,
 }
 
 #[derive(Debug, serde_derive::Deserialize)]
@@ -59,6 +60,7 @@ struct ConfigUser {
 
 struct Handler {
     config: Config,
+    owner: serenity::model::id::UserId,
     dc: CacheHttp,
     vrc: Arc<vrc::Vrc>,
 }
@@ -184,6 +186,25 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
             Ok(Message::GroupLeft { .. })  => {}
             Ok(Message::GroupMemberUpdated { .. })  => {}
             Ok(Message::GroupRoleUpdated { .. })  => {}
+            Err(WSElementError::SerdeJson {error, message}) => {
+                let dc = self.dc.clone();
+                let id = self.owner;
+                let body = serenity::builder::CreateMessage::new()
+                    .flags(serenity::model::channel::MessageFlags::IS_COMPONENTS_V2)
+                    .components(vec![
+                        serenity::builder::CreateComponent::Container(serenity::builder::CreateContainer::new(vec![
+                            serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new("# Failed to Deserialize Websocket Message")),
+                            serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Error: `{error}`"))),
+                            serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Data: ```\n{}\n```", String::from_utf8_lossy(&message.as_payload())))),
+                        ]))
+                    ]);
+                tokio::task::spawn(async move {
+                    if let Err(err) = id.direct_message(dc, body).await {
+                        log::error!("Failed to send message to {id}: {err}")
+                    }
+                });
+                log::error!("failed receiving ws element: {error}")
+            },
             Err(err) => {
                 log::error!("failed receiving ws element: {err}")
             },
@@ -194,7 +215,7 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
 #[tokio::main]
 async fn async_main() -> anyhow::Result<()> {
     let config: ConfigFile = serde_json::from_slice(&tokio::fs::read("config.json").await?)?;
-    let ConfigFile{configs} = config;
+    let ConfigFile{configs, owner} = config;
     let mut settings = serenity::cache::Settings::default();
     settings.cache_guilds = false;
     settings.max_messages = 0;
@@ -217,6 +238,7 @@ async fn async_main() -> anyhow::Result<()> {
         let vrc = Arc::new(vrc::Vrc::new(vrchat_cookies.into_iter())?);
         let handler = Arc::new(Mutex::new(Handler {
             config,
+            owner,
             dc: CacheHttp {
                 http: client.http.clone(),
                 cache: client.cache.clone(),

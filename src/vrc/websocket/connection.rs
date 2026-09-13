@@ -5,8 +5,8 @@ use crate::vrc::websocket::Message;
 
 #[derive(Debug, Error)]
 pub enum WSElementError{
-    #[error("SerdeJson: {0}")]
-    SerdeJson(serde_json::Error),
+    #[error("SerdeJson: {error}")]
+    SerdeJson{error: serde_json::Error, message: tokio_websockets::proto::Message},
     #[cfg(not(target_family = "wasm"))]
     #[error("UnsupportedMessageType: {0:?}")]
     UnsupportedMessageType(tokio_websockets::proto::Message),
@@ -133,18 +133,18 @@ mod tokio_websocket{
                     } else {
                         let message_content = &**message.as_payload();
                         if message_content.is_empty(){
-                            log::info!("Recieved empty Websocket Message. Likely to KeepAlive?");
+                            log::debug!("Recieved empty Websocket Message. Likely to KeepAlive?");
                             Poll::Pending
                         }else{
                             match serde_json::from_slice(message_content) {
                                 Ok(message) => Poll::Ready(Some(Ok(message))),
                                 Err(err) => {
                                     if let Some(text) = message.as_text(){
-                                        log::info!("Failed to decode Websocket message: error:{err}, message: {text}", );
+                                        log::error!("Failed to decode Websocket message: error:{err}, message: {text}", );
                                     }else{
-                                        log::info!("Failed to decode Websocket message: error:{err}, message: {message_content:#?}");
+                                        log::error!("Failed to decode Websocket message: error:{err}, message: {message_content:#?}");
                                     }
-                                    Poll::Ready(Some(Err(WSElementError::SerdeJson(err))))
+                                    Poll::Ready(Some(Err(WSElementError::SerdeJson{error: err, message})))
                                 },
                             }
                         }
