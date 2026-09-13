@@ -1,5 +1,7 @@
+use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
+use crate::vrc::websocket::platform::Platform;
 
 #[derive(Debug, Deserialize, Serialize, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
 #[serde(from = "&str", into = "String")]
@@ -23,15 +25,25 @@ impl From<&str> for Location {
         }
     }
 }
-impl From<Location> for String{
+impl From<Location> for String {
     fn from(value: Location) -> Self {
+        Into::<&str>::into(&value).to_string()
+    }
+}
+impl<'a> From<&'a Location> for &'a str{
+    fn from(value: &'a Location) -> Self {
         match value {
-            Location::Offline => "offline".to_string(),
-            Location::Traveling => "traveling".to_string(),
-            Location::Private => "private".to_string(),
-            Location::Null => "".to_string(),
-            Location::Other(other) => other.to_string(),
+            Location::Offline => "offline",
+            Location::Traveling => "traveling",
+            Location::Private => "private",
+            Location::Null => "",
+            Location::Other(other) => other,
         }
+    }
+}
+impl Display for Location {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Into::<&str>::into(self).fmt(f)
     }
 }
 

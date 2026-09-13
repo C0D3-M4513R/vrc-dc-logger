@@ -14,13 +14,13 @@ use crate::vrc::LoginError;
 use crate::vrc::websocket::connection::WSElementError;
 use crate::vrc::websocket::Message;
 
-fn main() -> Result<(), Error> {
+fn main() -> anyhow::Result<()> {
     match dotenvy::dotenv(){
         Ok(_) => {},
         Err(err) if err.not_found() => {},
         Err(err) => {
             eprintln!("Error loading .env: {err}");
-            return Err(Error::from(Box::new(err) as Box<dyn std::error::Error + Send + Sync>))
+            return Err(err.into())
         }
     }
     simple_logger::SimpleLogger::new()
@@ -37,12 +37,7 @@ fn main() -> Result<(), Error> {
 
 #[derive(Debug, serde_derive::Deserialize)]
 struct ConfigFile{
-    login_info: LoginInfo,
     configs: Box<[VRCConfig]>,
-}
-#[derive(Debug, serde_derive::Deserialize)]
-struct LoginInfo{
-    discord_token: serenity::secrets::Token,
 }
 
 #[derive(Debug, serde_derive::Deserialize)]
@@ -126,7 +121,7 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
                     }
                 }
             };
-            ($uid:expr, $action_name:literal) => {
+            ($uid:expr, $action_name:literal, $($element:expr),*) => {
                 if let Some(user) = self.config.tracking_users.get($uid) {
                     let body:serenity::builder::CreateMessage =
                         serenity::builder::CreateMessage::new()
@@ -134,6 +129,7 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
                             .components(vec![
                                 serenity::builder::CreateComponent::Container(serenity::builder::CreateContainer::new(vec![
                                     serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("# {} - {}", $action_name, user.backup_name))),
+                                    $($element),*
                                 ]))
                             ]);
                     for id in user.forward_ids.iter().copied() {
@@ -150,12 +146,25 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
         }
         match message {
             Ok(Message::FriendAdd { content }) => handle_msg!(&*content.user_id, content.user, "FriendAdd",),
-            Ok(Message::FriendDelete { content }) => handle_msg!(&*content.user_id, "FriendDelete"),
-            Ok(Message::FriendOnline { content }) => handle_msg!(&*content.user_id, content.user, "FriendOnline",),
-            Ok(Message::FriendActive { content }) => handle_msg!(&*content.user_id, content.user, "FriendActive",),
-            Ok(Message::FriendOffline { content }) => handle_msg!(&*content.user_id, "FriendOffline"),
+            Ok(Message::FriendDelete { content }) => handle_msg!(&*content.user_id, "FriendDelete",),
+            Ok(Message::FriendOnline { content }) => handle_msg!(&*content.user_id, content.user, "FriendOnline",
+                serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Platform: {}", content.platform))),
+                serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Location: {}", content.location))),
+                serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Can Request Invite: {}", content.can_request_invite)))
+            ),
+            Ok(Message::FriendActive { content }) => handle_msg!(&*content.user_id, content.user, "FriendActive",
+                serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Platform: {}", content.platform)))
+            ),
+            Ok(Message::FriendOffline { content }) => handle_msg!(&*content.user_id, "FriendOffline",
+                serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Platform: {}", content.platform)))
+            ),
             Ok(Message::FriendUpdate { content }) => handle_msg!(&*content.user_id, content.user, "FriendUpdate",),
-            Ok(Message::FriendLocation { content }) => handle_msg!(&*content.user_id, content.user, "FriendLocation",),
+            Ok(Message::FriendLocation { content }) => handle_msg!(&*content.user_id, content.user, "FriendLocation",
+                serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Location: {}", content.location))),
+                serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Traveling to Location: {}", content.traveling_to_location))),
+                serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("World Id: {}", content.world_id))),
+                serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Can Request Invite: {}", content.can_request_invite)))
+            ),
             Ok(Message::UserUpdate { .. }) => {}
             Ok(Message::UserLocation { .. }) => {}
             Ok(Message::UserBadgeAssigned { .. }) => {}
@@ -183,18 +192,16 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
 }
 
 #[tokio::main]
-async fn async_main() -> Result<(), error::Error> {
+async fn async_main() -> anyhow::Result<()> {
     let config: ConfigFile = serde_json::from_slice(&tokio::fs::read("config.json").await?)?;
-    let ConfigFile{login_info, configs} = config;
-    let LoginInfo{discord_token} = login_info;
+    let ConfigFile{configs} = config;
     let mut settings = serenity::cache::Settings::default();
     settings.cache_guilds = false;
     settings.max_messages = 0;
     settings.cache_users = true;
-    let mut client = serenity::Client::builder(discord_token, serenity::prelude::GatewayIntents::empty())
+    let mut client = serenity::Client::builder(serenity::all::Token::from_env("DISCORD_TOKEN")?, serenity::prelude::GatewayIntents::empty())
         .cache_settings(settings)
-        .await
-        .map_err(Box::<dyn std::error::Error + Sync + Send>::from)?
+        .await?
     ;
 
     {
@@ -220,12 +227,12 @@ async fn async_main() -> Result<(), error::Error> {
             RegisterUserAccount200Response::CurrentUser(_) => {}
             RegisterUserAccount200Response::RequiresTwoFactorAuth(_) => {
                 eprintln!("VRChat wants 2fa");
-                return Err(Error::LoginError(LoginError::Needs2fa));
+                return Err(Error::LoginError(LoginError::Needs2fa).into());
             }
         }
     }
 
 
-    client.start_autosharded().await.map_err(Box::<dyn std::error::Error + Send + Sync>::from)?;
+    client.start_autosharded().await?;
     Ok(())
 }

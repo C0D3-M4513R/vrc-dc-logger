@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
@@ -22,15 +23,26 @@ impl From<&str> for Platform{
         }
     }
 }
-impl From<Platform> for String{
+impl From<Platform> for String {
     fn from(value: Platform) -> Self {
+        Into::<&str>::into(&value).to_string()
+    }
+}
+impl<'a> From<&'a Platform> for &'a str{
+    fn from(value: &'a Platform) -> Self {
         match value {
-            Platform::StandaloneWindows => "standalonewindows".to_string(),
-            Platform::Android => "android".to_string(),
-            Platform::Web => "web".to_string(),
-            Platform::Null => "".to_string(),
-            Platform::Other(other) => other.to_string(),
+            Platform::StandaloneWindows => "standalonewindows",
+            Platform::Android => "android",
+            Platform::Web => "web",
+            Platform::Null => "",
+            Platform::Other(other) => other,
         }
+    }
+}
+
+impl Display for Platform {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Into::<&str>::into(self).fmt(f)
     }
 }
 

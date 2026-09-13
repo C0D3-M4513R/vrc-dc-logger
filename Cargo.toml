@@ -10,6 +10,7 @@ debug = []
 [dependencies]
 #other misc
 thiserror = "2.0.20"
+anyhow = "1"
 once_cell = "1"
 log = "0.4"
 simple_logger = "5"
