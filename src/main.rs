@@ -2,7 +2,9 @@
 mod vrc;
 mod error;
 
+use std::borrow::Cow;
 use std::sync::Arc;
+use serenity::all::{Context, FullEvent, Interaction};
 use tokio::sync::Mutex;
 pub(crate) use error::{VRCError, Error, impl_from};
 
@@ -12,6 +14,7 @@ pub use tokio::task::spawn_blocking as spawn_blocking;
 use vrchatapi::models::RegisterUserAccount200Response;
 use crate::vrc::LoginError;
 use crate::vrc::websocket::connection::WSElementError;
+use crate::vrc::websocket::location::Location;
 use crate::vrc::websocket::Message;
 
 fn main() -> anyhow::Result<()> {
@@ -47,18 +50,21 @@ struct VRCConfig{
     config: Config,
 }
 
-#[derive(Debug, serde_derive::Deserialize)]
+#[derive(Debug, Clone, serde_derive::Deserialize)]
 struct Config{
-    tracking_users: std::collections::HashMap<Box<str>, ConfigUser>,
+    tracking_users: Arc<std::collections::HashMap<Box<str>, ConfigUser>>,
+    vrc_user_id: Arc<str>,
+    account_owners: Arc<std::collections::HashSet<serenity::model::id::UserId>>,
 }
 
-#[derive(Debug, serde_derive::Deserialize)]
+#[derive(Debug, Clone, serde_derive::Deserialize)]
 struct ConfigUser {
-    pub forward_ids: Box<[serenity::model::id::UserId]>,
+    pub forward_ids: Box<std::collections::HashSet<serenity::model::id::UserId>>,
     pub backup_name: Box<str>,
 }
 
 struct Handler {
+    i: usize,
     config: Config,
     owner: serenity::model::id::UserId,
     dc: CacheHttp,
@@ -90,27 +96,34 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
     fn handler(&mut self, message: Result<Message, WSElementError>) {
         log::info!("Message: {message:?}");
         macro_rules! handle_msg {
-            ($uid:expr, $user:expr, $action_name:literal, $($element:expr),*) => {
+            ($uid:expr, $user:expr, $action_name:literal, $($element:expr),* $(; $additional:expr)?) => {
                 if let Some(user) = self.config.tracking_users.get($uid) {
                     let vrc_user = &$user;
+                    let container = vec![
+                        serenity::builder::CreateContainerComponent::Section(serenity::builder::CreateSection::new(
+                            vec![
+                                serenity::builder::CreateSectionComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("# {} - {} - {}", $action_name, user.backup_name, vrc_user.display_name))),
+                                serenity::builder::CreateSectionComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("State: {}, Status: {}, Description: {}", vrc_user.state, vrc_user.status, vrc_user.status_description))),
+                                serenity::builder::CreateSectionComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Bio:\n {}", vrc_user.bio)))
+                            ],
+                            serenity::builder::CreateSectionAccessory::Thumbnail(serenity::builder::CreateThumbnail::new(
+                                serenity::builder::CreateUnfurledMediaItem::new(get_url(vrc_user).to_string())
+                            ).description(format!("Profile Image of - {}", vrc_user.display_name))))
+                        ),
+                        serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Bio Links: {}", vrc_user.bio_links.iter().map(|v|format!("\n 1. {v}")).fold(String::new(), |mut a, b|{a.push_str(&b); a})))),
+                        $($element),*
+                    ];
+                    $(let container = {
+                        let mut container = container;
+                        container.extend($additional);
+                        container
+                    };)?
+
                     let body:serenity::builder::CreateMessage =
                         serenity::builder::CreateMessage::new()
                         .flags(serenity::model::channel::MessageFlags::IS_COMPONENTS_V2)
                         .components(vec![
-                            serenity::builder::CreateComponent::Container(serenity::builder::CreateContainer::new(vec![
-                                serenity::builder::CreateContainerComponent::Section(serenity::builder::CreateSection::new(
-                                    vec![
-                                        serenity::builder::CreateSectionComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("# {} - {} - {}", $action_name, user.backup_name, vrc_user.display_name))),
-                                        serenity::builder::CreateSectionComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("State: {}, Status: {}, Description: {}", vrc_user.state, vrc_user.status, vrc_user.status_description))),
-                                        serenity::builder::CreateSectionComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Bio:\n {}", vrc_user.bio)))
-                                    ],
-                                    serenity::builder::CreateSectionAccessory::Thumbnail(serenity::builder::CreateThumbnail::new(
-                                        serenity::builder::CreateUnfurledMediaItem::new(get_url(vrc_user).to_string())
-                                    ).description(format!("Profile Image of - {}", vrc_user.display_name))))
-                                ),
-                                serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Bio Links: {}", vrc_user.bio_links.iter().map(|v|format!("\n 1. {v}")).fold(String::new(), |mut a, b|{a.push_str(&b); a})))),
-                                $($element),*
-                            ]))
+                            serenity::builder::CreateComponent::Container(serenity::builder::CreateContainer::new(container))
                         ]);
                     for id in user.forward_ids.iter().copied() {
                         let body = body.clone();
@@ -146,13 +159,49 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
                 }
             };
         }
+        let invite=|loc: &Location|{
+            let mut data = vec![];
+            if let Location::Other(v) = loc {
+                if let Some((world, instance)) = v.split_once(":") {
+                    let id = Id::InviteMe {i: self.i, vrc_user_id: self.config.vrc_user_id.clone(), world: world.to_string(), instance: instance.to_string()};
+                    match serde_json::to_string(&id) {
+                        Ok(v) => {
+                            data.push(
+                                serenity::builder::CreateContainerComponent::ActionRow(serenity::builder::CreateActionRow::Buttons(vec![
+                                    serenity::builder::CreateButton::new(v).label("Invite Myself")
+                                ].into()))
+                            );
+                        },
+                        Err(err) => {
+                            log::error!("Failed to serialize Id {id:?}: {err}");
+                        }
+                    }
+                }
+            }
+
+            data
+        };
+        let user = |usr:&vrchatapi::models::User| {
+            let mut data = vec![];
+
+            if let Some(location) = &usr.location { data.push(serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Location: {}", location)))); }
+            if let Some(world_id) = &usr.world_id { data.push(serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("World Id: {}", world_id)))); }
+            if let Some(instance_id) = &usr.instance_id { data.push(serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Instance Id: {}", instance_id)))); }
+            if let Some(traveling_to_world) = &usr.traveling_to_world { data.push(serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Traveling to World: {}", traveling_to_world)))); }
+            if let Some(traveling_to_location) = &usr.traveling_to_location { data.push(serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Traveling to Location: {}", traveling_to_location)))); }
+            if let Some(traveling_to_instance) = &usr.traveling_to_instance { data.push(serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Traveling to Instance: {}", traveling_to_instance)))); }
+            if let Some(location) = &usr.location { data.extend(invite(&Location::from(&**location))) };
+
+            data
+        };
         match message {
             Ok(Message::FriendAdd { content }) => handle_msg!(&*content.user_id, content.user, "FriendAdd",),
             Ok(Message::FriendDelete { content }) => handle_msg!(&*content.user_id, "FriendDelete",),
             Ok(Message::FriendOnline { content }) => handle_msg!(&*content.user_id, content.user, "FriendOnline",
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Platform: {}", content.platform))),
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Location: {}", content.location))),
-                serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Can Request Invite: {}", content.can_request_invite)))
+                serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Can Request Invite: {}", content.can_request_invite)));
+                invite(&content.location)
             ),
             Ok(Message::FriendActive { content }) => handle_msg!(&*content.user_id, content.user, "FriendActive",
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Platform: {}", content.platform)))
@@ -160,12 +209,15 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
             Ok(Message::FriendOffline { content }) => handle_msg!(&*content.user_id, "FriendOffline",
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Platform: {}", content.platform)))
             ),
-            Ok(Message::FriendUpdate { content }) => handle_msg!(&*content.user_id, content.user, "FriendUpdate",),
+            Ok(Message::FriendUpdate { content }) => handle_msg!(&*content.user_id, content.user, "FriendUpdate",;
+                user(&content.user)
+            ),
             Ok(Message::FriendLocation { content }) => handle_msg!(&*content.user_id, content.user, "FriendLocation",
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Location: {}", content.location))),
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Traveling to Location: {}", content.traveling_to_location))),
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("World Id: {}", content.world_id))),
-                serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Can Request Invite: {}", content.can_request_invite)))
+                serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Can Request Invite: {}", content.can_request_invite)));
+                invite(&content.location)
             ),
             Ok(Message::UserUpdate { .. }) => {}
             Ok(Message::UserLocation { .. }) => {}
@@ -212,16 +264,101 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
     }
 }
 
+#[derive(Debug, Clone, serde_derive::Deserialize, serde_derive::Serialize)]
+enum Id{
+    InviteMe{i: usize, vrc_user_id: Arc<str>, world: String, instance: String}
+}
+
+struct EventHandler{
+    configs: Box<[(Config, Arc<vrc::Vrc>)]>
+}
+#[serenity::async_trait]
+impl serenity::prelude::EventHandler for EventHandler {
+    async fn dispatch(&self, context: &Context, event: &FullEvent) {
+        match event {
+            FullEvent::InteractionCreate {
+                interaction: Interaction::Component(component),
+                ..
+            } => {
+
+                let respond = async |v:Cow<'static, str>|{
+                    match component.create_response(
+                        &*context.http,
+                        serenity::builder::CreateInteractionResponse::Message(serenity::builder::CreateInteractionResponseMessage::new().content(v.clone()).ephemeral(true))
+                    ).await {
+                        Ok(()) => {},
+                        Err(err) => {
+                            log::error!("Failed to send error message for interaction: {err}\n\tOriginal Error: {v}");
+                        }
+                    }
+                };
+
+                let id = match serde_json::from_str::<Id>(&component.data.custom_id) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        respond(format!("Error deserializing id of Button: {err}").into()).await;
+                        return;
+                    }
+                };
+
+                match id {
+                    Id::InviteMe { i, vrc_user_id, world, instance } => {
+                        let pred = |v: &&(Config, Arc<vrc::Vrc>)|v.0.vrc_user_id == vrc_user_id;
+                        let usr = self.configs.get(i)
+                            .filter(pred)
+                            .map_or_else(||{
+                                self.configs.iter().filter(pred).next()
+                            }, Some);
+                        let (cfg, vrc) = match usr {
+                            Some(v) => v,
+                            None => {
+                                respond("Did not find vrchat account to invite".into()).await;
+                                return;
+                            }
+                        };
+
+                        if cfg.account_owners.get(&component.user.id).is_none() {
+                            respond("You are NOT listed as one of the VRChat account owners. You don't have permission to send an invite to the VRChat account.".into()).await;
+                            return;
+                        }
+
+                        match vrchatapi::apis::invite_api::invite_myself_to(&vrc.get_configuration().await, &world, &instance).await {
+                            Ok(_) => {
+                                respond(
+                                    "Sent invite".into()
+                                ).await;
+                            },
+                            Err(err) => {
+                                respond(
+                                    format!("Failed to send invite: {err}").into()
+                                ).await;
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 #[tokio::main]
 async fn async_main() -> anyhow::Result<()> {
     let config: ConfigFile = serde_json::from_slice(&tokio::fs::read("config.json").await?)?;
     let ConfigFile{configs, owner} = config;
+    let vrc = configs.into_iter().map(|VRCConfig{vrchat_cookies, config}|{
+        (config, Arc::new(vrc::Vrc::new(vrchat_cookies.into_iter()).expect("Failed to create VRChat instance")))
+    }).collect::<Vec<_>>();
+
     let mut settings = serenity::cache::Settings::default();
     settings.cache_guilds = false;
     settings.max_messages = 0;
     settings.cache_users = true;
     let mut client = serenity::Client::builder(serenity::all::Token::from_env("DISCORD_TOKEN")?, serenity::prelude::GatewayIntents::empty())
         .cache_settings(settings)
+        .event_handler(Arc::new(EventHandler{
+            configs: vrc.clone().into_boxed_slice()
+        }))
         .await?
     ;
 
@@ -233,10 +370,9 @@ async fn async_main() -> anyhow::Result<()> {
         });
     }
 
-    for config in configs {
-        let VRCConfig{vrchat_cookies, config} = config;
-        let vrc = Arc::new(vrc::Vrc::new(vrchat_cookies.into_iter())?);
+    for (i, (config, vrc)) in vrc.into_iter().enumerate() {
         let handler = Arc::new(Mutex::new(Handler {
+            i,
             config,
             owner,
             dc: CacheHttp {
