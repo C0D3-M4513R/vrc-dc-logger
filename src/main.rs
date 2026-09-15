@@ -96,7 +96,7 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
     fn handler(&mut self, message: Result<Message, WSElementError>) {
         log::info!("Message: {message:?}");
         macro_rules! handle_msg {
-            ($uid:expr, $user:expr, $action_name:literal, $($element:expr),* $(; $additional:expr)?) => {
+            ($uid:expr, $user:expr, $action_name:literal, $($element:expr),* $(; $additional:expr),*) => {
                 if let Some(user) = self.config.tracking_users.get($uid) {
                     let vrc_user = &$user;
                     let container = vec![
@@ -117,7 +117,7 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
                         let mut container = container;
                         container.extend($additional);
                         container
-                    };)?
+                    };)*
 
                     let body:serenity::builder::CreateMessage =
                         serenity::builder::CreateMessage::new()
@@ -159,27 +159,26 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
                 }
             };
         }
-        let invite=|loc: &Location|{
+        let invite=|locs: &[Location], olocs: &[Option<Location>]|{
             let mut data = vec![];
-            if let Location::Other(v) = loc {
-                if let Some((world, instance)) = v.split_once(":") {
-                    let id = Id::InviteMe {i: self.i, vrc_user_id: self.config.vrc_user_id.clone(), world: world.to_string(), instance: instance.to_string()};
-                    match serde_json::to_string(&id) {
-                        Ok(v) => {
-                            data.push(
-                                serenity::builder::CreateContainerComponent::ActionRow(serenity::builder::CreateActionRow::Buttons(vec![
-                                    serenity::builder::CreateButton::new(v).label("Invite Myself")
-                                ].into()))
-                            );
-                        },
-                        Err(err) => {
-                            log::error!("Failed to serialize Id {id:?}: {err}");
+            for loc in locs.into_iter().chain(olocs.into_iter().filter_map(Option::as_ref)) {
+                if let Location::Other(v) = loc {
+                    if let Some((world, instance)) = v.split_once(":") {
+                        let id = Id::InviteMe {i: self.i, vrc_user_id: self.config.vrc_user_id.clone(), world: world.to_string(), instance: instance.to_string()};
+                        match serde_json::to_string(&id) {
+                            Ok(v) => {
+                                data.push(serenity::builder::CreateButton::new(v).label("Invite Myself"));
+                            },
+                            Err(err) => {
+                                log::error!("Failed to serialize Id {id:?}: {err}");
+                            }
                         }
                     }
                 }
             }
 
-            data
+            let size = data.len();
+            (serenity::builder::CreateContainerComponent::ActionRow(serenity::builder::CreateActionRow::Buttons(data.into())), size)
         };
         let user = |usr:&vrchatapi::models::User| {
             let mut data = vec![];
@@ -190,7 +189,13 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
             if let Some(traveling_to_world) = &usr.traveling_to_world { data.push(serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Traveling to World: {}", traveling_to_world)))); }
             if let Some(traveling_to_location) = &usr.traveling_to_location { data.push(serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Traveling to Location: {}", traveling_to_location)))); }
             if let Some(traveling_to_instance) = &usr.traveling_to_instance { data.push(serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Traveling to Instance: {}", traveling_to_instance)))); }
-            if let Some(location) = &usr.location { data.extend(invite(&Location::from(&**location))) };
+            let (row, len) = invite(&[], &[
+                usr.location.as_ref().map(|v|Location::from(&**v)),
+                usr.traveling_to_location.as_ref().map(|v|Location::from(&**v)),
+            ]);
+            if len > 0 {
+                data.push(row);
+            }
 
             data
         };
@@ -201,7 +206,7 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Platform: {}", content.platform))),
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Location: {}", content.location))),
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Can Request Invite: {}", content.can_request_invite)));
-                invite(&content.location)
+                [invite(&[content.location], &[]).0]
             ),
             Ok(Message::FriendActive { content }) => handle_msg!(&*content.user_id, content.user, "FriendActive",
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Platform: {}", content.platform)))
@@ -217,7 +222,7 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Traveling to Location: {}", content.traveling_to_location))),
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("World Id: {}", content.world_id))),
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Can Request Invite: {}", content.can_request_invite)));
-                invite(&content.location)
+                [invite(&[content.location, content.traveling_to_location], &[]).0]
             ),
             Ok(Message::UserUpdate { .. }) => {}
             Ok(Message::UserLocation { .. }) => {}
