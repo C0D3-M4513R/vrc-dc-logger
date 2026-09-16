@@ -104,7 +104,7 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
                                     .as_ref()
                                     .cloned()
                                     .map(Cow::Owned)
-                                    .unwrap_or(Cow::Borrowed("https://cdn.discordapp.com/embed/avatars/4.png")))
+                                    .unwrap_or(Cow::Borrowed("https://cdn.discordapp.com/embed/avatars/1.png")))
                             ).description(format!("Profile Image of - {}", vrc_user.display_name))))
                         ),
                         $($element),*
