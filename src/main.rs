@@ -30,7 +30,7 @@ fn main() -> anyhow::Result<()> {
         .with_utc_timestamps()
         .with_colors(true)
         .with_level(log::LevelFilter::Info)
-        .with_module_level("eframe", log::LevelFilter::Info)
+        .with_module_level("vrchatapi", log::LevelFilter::Debug)
         .env()
         .init()
         .expect("Failed to initialize logger");
@@ -382,6 +382,11 @@ async fn async_main() -> anyhow::Result<()> {
             },
             vrc: vrc.clone(),
         }));
+        match vrchatapi::apis::playermoderation_api::get_player_moderations(&vrc.get_configuration().await, None, None).await {
+            Ok(v) => {log::info!("Got player Moderations: {v:?}"); }
+            Err(err) => { log::warn!("Failed to get player Moderations. Are we actually logged in? {err}"); }
+        }
+
         match vrc.check_auth(handler.lock_owned().await).await.expect("VRChat isn't logged in") {
             RegisterUserAccount200Response::CurrentUser(_) => {}
             RegisterUserAccount200Response::RequiresTwoFactorAuth(_) => {

@@ -124,15 +124,14 @@ impl Vrc {
     }
 
     pub async fn get_configuration(&self) -> vrchatapi::apis::configuration::Configuration {
-        let mut config = vrchatapi::apis::configuration::Configuration {
-            base_path: BASE_PATH.to_owned(),
-            user_agent: Some(VRC_USER_AGENT.to_owned()),
-            client: self.client.clone().into(),
-            basic_auth: None,
-            oauth_access_token: None,
-            bearer_access_token: None,
-            api_key: None,
-        };
+        let mut config = vrchatapi::apis::configuration::Configuration::default();
+        config.user_agent = Some(VRC_USER_AGENT.to_owned());
+        config.client = self.client.clone().into();
+        #[cfg(debug_assertions)]
+        {
+            config.debug = true;
+        }
+
         let auth = self.auth.read().await;
         if let Some(auth) = &auth.basic_auth {
             config.basic_auth = Some((
