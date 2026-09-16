@@ -85,13 +85,6 @@ impl serenity::prelude::CacheHttp for CacheHttp {
     }
 }
 
-fn get_url(user: &vrchatapi::models::User) -> &str {
-    user.icon_url
-        .as_ref()
-        .or_else(||{ let url = &user.profile_pic_override_thumbnail; if !url.is_empty() {Some(url)} else {None} })
-        .unwrap_or(&user.current_avatar_thumbnail_image_url)
-}
-
 impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Handler> {
     fn handler(&mut self, message: Result<Message, WSElementError>) {
         log::info!("Message: {message:?}");
@@ -104,13 +97,16 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
                             vec![
                                 serenity::builder::CreateSectionComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("# {} - {} - {}", $action_name, user.backup_name, vrc_user.display_name))),
                                 serenity::builder::CreateSectionComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("State: {}, Status: {}, Description: {}", vrc_user.state, vrc_user.status, vrc_user.status_description))),
-                                serenity::builder::CreateSectionComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Bio:\n {}", vrc_user.bio)))
                             ],
                             serenity::builder::CreateSectionAccessory::Thumbnail(serenity::builder::CreateThumbnail::new(
-                                serenity::builder::CreateUnfurledMediaItem::new(get_url(vrc_user).to_string())
+                                serenity::builder::CreateUnfurledMediaItem::new(
+                                    vrc_user.icon_url
+                                    .as_ref()
+                                    .cloned()
+                                    .map(Cow::Owned)
+                                    .unwrap_or(Cow::Borrowed("https://cdn.discordapp.com/embed/avatars/4.png")))
                             ).description(format!("Profile Image of - {}", vrc_user.display_name))))
                         ),
-                        serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Bio Links: {}", vrc_user.bio_links.iter().map(|v|format!("\n 1. {v}")).fold(String::new(), |mut a, b|{a.push_str(&b); a})))),
                         $($element),*
                     ];
                     $(let container = {
