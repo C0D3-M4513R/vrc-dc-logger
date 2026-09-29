@@ -2510,9 +2510,9 @@ dependencies = [
 
 [[package]]
 name = "vrchatapi"
-version = "1.20.10-nightly.12"
+version = "1.21.1-nightly.71"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5b27b736424c854e54260bd4101772e1f366bc8bcf024c5ff8d9166c605ad74"
+checksum = "ba3c78b7b34746c04e87443511e15103790e6d528bc2572155f5f65af8a1f37d"
 dependencies = [
  "chrono",
  "log",

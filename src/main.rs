@@ -11,7 +11,7 @@ pub(crate) use error::{VRCError, Error, impl_from};
 pub use tokio::task::spawn as spawn;
 pub use tokio::task::spawn_local as spawn_local;
 pub use tokio::task::spawn_blocking as spawn_blocking;
-use vrchatapi::models::RegisterUserAccount200Response;
+use vrchatapi::models::CurrentUserLoginResponse;
 use crate::vrc::LoginError;
 use crate::vrc::websocket::connection::WSElementError;
 use crate::vrc::websocket::location::Location;
@@ -388,8 +388,8 @@ async fn async_main() -> anyhow::Result<()> {
         }
 
         match vrc.check_auth(handler.lock_owned().await).await.expect("VRChat isn't logged in") {
-            RegisterUserAccount200Response::CurrentUser(_) => {}
-            RegisterUserAccount200Response::RequiresTwoFactorAuth(_) => {
+            CurrentUserLoginResponse::CurrentUser(_) => {}
+            CurrentUserLoginResponse::RequiresTwoFactorAuth(_) => {
                 eprintln!("VRChat wants 2fa");
                 return Err(Error::LoginError(LoginError::Needs2fa).into());
             }

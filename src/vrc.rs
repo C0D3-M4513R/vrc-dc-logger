@@ -242,14 +242,14 @@ impl Vrc {
     }
     ///This will check if the auth token is still valid.
     ///This function may be used to re-establish the invariant of the Vrc struct.
-    pub async fn check_auth<T: websocket::connection::WSHandler + Send + 'static>(&self, storage: T) -> Result<vrchatapi::models::RegisterUserAccount200Response, vrchatapi::apis::Error<vrchatapi::apis::authentication_api::GetCurrentUserError>> {
+    pub async fn check_auth<T: websocket::connection::WSHandler + Send + 'static>(&self, storage: T) -> Result<vrchatapi::models::CurrentUserLoginResponse, vrchatapi::apis::Error<vrchatapi::apis::authentication_api::GetCurrentUserError>> {
         let mut config = self.get_configuration().await;
         config.basic_auth = None;
         match vrchatapi::apis::authentication_api::get_current_user(&config).await {
-            Ok(vrchatapi::models::RegisterUserAccount200Response::CurrentUser(user)) => {
+            Ok(vrchatapi::models::CurrentUserLoginResponse::CurrentUser(user)) => {
                 *self.logged_in.write().await = Some(Arc::new(user.clone()));
                 self.start_ws(storage).await;
-                Ok(vrchatapi::models::RegisterUserAccount200Response::CurrentUser(user))
+                Ok(vrchatapi::models::CurrentUserLoginResponse::CurrentUser(user))
             },
             Ok(v) => Ok(v),
             Err(error) => {
@@ -264,7 +264,7 @@ impl Vrc {
         &self,
         exclude_basic_auth: bool,
         storage: T,
-    ) -> Result<vrchatapi::models::RegisterUserAccount200Response, LoginError<()>> {
+    ) -> Result<vrchatapi::models::CurrentUserLoginResponse, LoginError<()>> {
         if self.logged_in.read().await.is_some() {
             return Err(LoginError::AlreadyLoggedIn);
         }
@@ -273,13 +273,13 @@ impl Vrc {
             config.basic_auth = None;
         }
         match vrchatapi::apis::authentication_api::get_current_user(&config).await {
-            Ok(vrchatapi::models::RegisterUserAccount200Response::RequiresTwoFactorAuth(two_fa)) => {
-                Ok(vrchatapi::models::RegisterUserAccount200Response::RequiresTwoFactorAuth(two_fa))
+            Ok(vrchatapi::models::CurrentUserLoginResponse::RequiresTwoFactorAuth(two_fa)) => {
+                Ok(vrchatapi::models::CurrentUserLoginResponse::RequiresTwoFactorAuth(two_fa))
             }
-            Ok(vrchatapi::models::RegisterUserAccount200Response::CurrentUser(login)) => {
+            Ok(vrchatapi::models::CurrentUserLoginResponse::CurrentUser(login)) => {
                 *self.logged_in.write().await = Some(Arc::new(login.clone()));
                 self.start_ws(storage).await;
-                Ok(vrchatapi::models::RegisterUserAccount200Response::CurrentUser(login))
+                Ok(vrchatapi::models::CurrentUserLoginResponse::CurrentUser(login))
             }
             Err(e) => {
                 log::error!("Failed to log in: {}", e);

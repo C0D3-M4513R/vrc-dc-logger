@@ -20,5 +20,5 @@ pub struct GroupMemberUpdated {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all="camelCase")]
 pub struct GroupRoleUpdated {
-    pub member: vrchatapi::models::group_role::GroupRole
+    pub role: vrchatapi::models::group_role::GroupRole
 }
