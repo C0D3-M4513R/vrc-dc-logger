@@ -179,7 +179,7 @@ impl Vrc {
         Ok(())
     }
 
-    pub async fn test_ws<T: websocket::connection::WSHandler + Send + 'static>(&self, storage: T) {
+    pub async fn test_ws<T: websocket::WSHandler + Send + 'static>(&self, storage: T) {
         let ws = self.websocket_terminator.read().await;
         if let Some(v) = ws.as_ref() {
             if v.is_closed(){
@@ -191,7 +191,7 @@ impl Vrc {
         }
     }
 
-    async fn start_ws<T: websocket::connection::WSHandler + Send + 'static>(&self, storage: T) {
+    async fn start_ws<T: websocket::WSHandler + Send + 'static>(&self, storage: T) {
         if let Some(terminator) = self.websocket_terminator.write().await.take(){
             terminator.send(());
         }
@@ -225,7 +225,7 @@ impl Vrc {
                 {
                     log::info!("Trying to start Websocket with auth token: {auth_token} and cookies: {cookies:#?}");
                 }
-                match websocket::connection::WebSocket::new(auth_token.as_str(), cookies, storage).await{
+                match websocket::WebSocket::new(auth_token.as_str(), cookies, storage).await{
                     Ok(terminator_sender) => {
                         *websocket_terminator.write().await = Some(terminator_sender);
                         log::info!("Websocket Started");
@@ -242,7 +242,7 @@ impl Vrc {
     }
     ///This will check if the auth token is still valid.
     ///This function may be used to re-establish the invariant of the Vrc struct.
-    pub async fn check_auth<T: websocket::connection::WSHandler + Send + 'static>(&self, storage: T) -> Result<vrchatapi::models::CurrentUserLoginResponse, vrchatapi::apis::Error<vrchatapi::apis::authentication_api::GetCurrentUserError>> {
+    pub async fn check_auth<T: websocket::WSHandler + Send + 'static>(&self, storage: T) -> Result<vrchatapi::models::CurrentUserLoginResponse, vrchatapi::apis::Error<vrchatapi::apis::authentication_api::GetCurrentUserError>> {
         let mut config = self.get_configuration().await;
         config.basic_auth = None;
         match vrchatapi::apis::authentication_api::get_current_user(&config).await {
@@ -260,7 +260,7 @@ impl Vrc {
         }
     }
 
-    pub async fn login<T: websocket::connection::WSHandler + Send + 'static>(
+    pub async fn login<T: websocket::WSHandler + Send + 'static>(
         &self,
         exclude_basic_auth: bool,
         storage: T,
@@ -288,7 +288,7 @@ impl Vrc {
         }
     }
 
-    pub async fn verify_2fa<T: websocket::connection::WSHandler + Send + 'static>(
+    pub async fn verify_2fa<T: websocket::WSHandler + Send + 'static>(
         &self,
         two_fa: String,
         method: TwoFaMethod,

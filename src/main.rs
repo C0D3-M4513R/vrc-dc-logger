@@ -11,11 +11,9 @@ pub(crate) use error::{VRCError, Error, impl_from};
 pub use tokio::task::spawn as spawn;
 pub use tokio::task::spawn_local as spawn_local;
 pub use tokio::task::spawn_blocking as spawn_blocking;
-use vrchatapi::models::CurrentUserLoginResponse;
+use vrchatapi::models::{CurrentUserLoginResponse, WebsocketMessage};
 use crate::vrc::LoginError;
-use crate::vrc::websocket::connection::WSElementError;
-use crate::vrc::websocket::location::Location;
-use crate::vrc::websocket::Message;
+use crate::vrc::websocket::WSElementError;
 
 fn main() -> anyhow::Result<()> {
     match dotenvy::dotenv(){
@@ -85,8 +83,8 @@ impl serenity::prelude::CacheHttp for CacheHttp {
     }
 }
 
-impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Handler> {
-    fn handler(&mut self, message: Result<Message, WSElementError>) {
+impl vrc::websocket::WSHandler for tokio::sync::OwnedMutexGuard<Handler> {
+    fn handler(&mut self, message: Result<WebsocketMessage, WSElementError>) {
         log::info!("Message: {message:?}");
         macro_rules! handle_msg {
             ($uid:expr, $user:expr, $action_name:literal, $($element:expr),* $(; $additional:expr),*) => {
@@ -132,16 +130,24 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
                     }
                 }
             };
-            ($uid:expr, $action_name:literal, $($element:expr),*) => {
+            ($uid:expr, $action_name:literal, $($element:expr),* $(; $additional:expr),*) => {
                 if let Some(user) = self.config.tracking_users.get($uid) {
+                    let container = vec![
+                            serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("# {} - {}", $action_name, user.backup_name))),
+                            $($element),*
+                        ];
+
+                    $(let container = {
+                        let mut container = container;
+                        container.extend($additional);
+                        container
+                    };)*
+
                     let body:serenity::builder::CreateMessage =
                         serenity::builder::CreateMessage::new()
                             .flags(serenity::model::channel::MessageFlags::IS_COMPONENTS_V2)
                             .components(vec![
-                                serenity::builder::CreateComponent::Container(serenity::builder::CreateContainer::new(vec![
-                                    serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("# {} - {}", $action_name, user.backup_name))),
-                                    $($element),*
-                                ]))
+                                serenity::builder::CreateComponent::Container(serenity::builder::CreateContainer::new(container))
                             ]);
                     for id in user.forward_ids.iter().copied() {
                         let body = body.clone();
@@ -155,19 +161,17 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
                 }
             };
         }
-        let invite=|locs: &[Location], olocs: &[Option<Location>]|{
+        let invite=|locs: &[&str], olocs: &[Option<&str>]|{
             let mut data = vec![];
             for loc in locs.into_iter().chain(olocs.into_iter().filter_map(Option::as_ref)) {
-                if let Location::Other(v) = loc {
-                    if let Some((world, instance)) = v.split_once(":") {
-                        let id = Id::InviteMe {i: self.i, vrc_user_id: self.config.vrc_user_id.clone(), world: world.to_string(), instance: instance.to_string()};
-                        match serde_json::to_string(&id) {
-                            Ok(v) => {
-                                data.push(serenity::builder::CreateButton::new(v).label("Invite Myself"));
-                            },
-                            Err(err) => {
-                                log::error!("Failed to serialize Id {id:?}: {err}");
-                            }
+                if let Some((world, instance)) = loc.split_once(":") {
+                    let id = Id::InviteMe {i: self.i, vrc_user_id: self.config.vrc_user_id.clone(), world: world.to_string(), instance: instance.to_string()};
+                    match serde_json::to_string(&id) {
+                        Ok(v) => {
+                            data.push(serenity::builder::CreateButton::new(v).label("Invite Myself"));
+                        },
+                        Err(err) => {
+                            log::error!("Failed to serialize Id {id:?}: {err}");
                         }
                     }
                 }
@@ -186,8 +190,8 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
             if let Some(traveling_to_location) = &usr.traveling_to_location { data.push(serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Traveling to Location: {}", traveling_to_location)))); }
             if let Some(traveling_to_instance) = &usr.traveling_to_instance { data.push(serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Traveling to Instance: {}", traveling_to_instance)))); }
             let (row, len) = invite(&[], &[
-                usr.location.as_ref().map(|v|Location::from(&**v)),
-                usr.traveling_to_location.as_ref().map(|v|Location::from(&**v)),
+                usr.location.as_ref().map(String::as_str),
+                usr.traveling_to_location.as_ref().map(String::as_str),
             ]);
             if len > 0 {
                 data.push(row);
@@ -196,49 +200,49 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
             data
         };
         match message {
-            Ok(Message::FriendAdd { content }) => handle_msg!(&*content.user_id, content.user, "FriendAdd",),
-            Ok(Message::FriendDelete { content }) => handle_msg!(&*content.user_id, "FriendDelete",),
-            Ok(Message::FriendOnline { content }) => handle_msg!(&*content.user_id, content.user, "FriendOnline",
+            Ok(WebsocketMessage::FriendAdd(vrchatapi::models::WebsocketFriendAddEncoded{ content, r#type: _ })) => handle_msg!(&*content.user_id, content.user, "FriendAdd",),
+            Ok(WebsocketMessage::FriendDelete(vrchatapi::models::WebsocketFriendDeleteEncoded{ content, r#type: _ })) => handle_msg!(&*content.user_id, "FriendDelete",),
+            Ok(WebsocketMessage::FriendOnline(vrchatapi::models::WebsocketFriendOnlineEncoded{ content, r#type: _ })) => handle_msg!(&*content.user_id, "FriendOnline",
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Platform: {}", content.platform))),
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Location: {}", content.location))),
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Can Request Invite: {}", content.can_request_invite)));
-                [invite(&[content.location], &[]).0]
+                [invite(&[&content.location], &[]).0]
             ),
-            Ok(Message::FriendActive { content }) => handle_msg!(&*content.user_id, content.user, "FriendActive",
+            Ok(WebsocketMessage::FriendActive(vrchatapi::models::WebsocketFriendActiveEncoded{ content, r#type: _ })) => handle_msg!(&*content.user_id, content.user, "FriendActive",
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Platform: {}", content.platform)))
             ),
-            Ok(Message::FriendOffline { content }) => handle_msg!(&*content.user_id, "FriendOffline",
+            Ok(WebsocketMessage::FriendOffline(vrchatapi::models::WebsocketFriendOfflineEncoded{ content, r#type: _ })) => handle_msg!(&*content.user_id, "FriendOffline",
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Platform: {}", content.platform)))
             ),
-            Ok(Message::FriendUpdate { content }) => handle_msg!(&*content.user_id, content.user, "FriendUpdate",;
+            Ok(WebsocketMessage::FriendUpdate(vrchatapi::models::WebsocketFriendUpdateEncoded{ content, r#type: _})) => handle_msg!(&*content.user_id, content.user, "FriendUpdate",;
                 user(&content.user)
             ),
-            Ok(Message::FriendLocation { content }) => handle_msg!(&*content.user_id, content.user, "FriendLocation",
+            Ok(WebsocketMessage::FriendLocation(vrchatapi::models::WebsocketFriendLocationEncoded{ content, r#type: _ })) => handle_msg!(&*content.user_id, content.user, "FriendLocation",
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Location: {}", content.location))),
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Traveling to Location: {}", content.traveling_to_location))),
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("World Id: {}", content.world_id))),
                 serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Can Request Invite: {}", content.can_request_invite)));
-                [invite(&[content.location, content.traveling_to_location], &[]).0]
+                [invite(&[content.location.as_str(), content.traveling_to_location.as_str()], &[]).0]
             ),
-            Ok(Message::UserUpdate { .. }) => {}
-            Ok(Message::UserLocation { .. }) => {}
-            Ok(Message::UserBadgeAssigned { .. }) => {}
-            Ok(Message::UserBadgeUnassigned { .. }) => {}
-            Ok(Message::Notification { .. })  => {}
-            Ok(Message::ResponseNotification { .. })  => {}
-            Ok(Message::SeeNotification { .. })  => {}
-            Ok(Message::HideNotification { .. })  => {}
-            Ok(Message::ClearNotification)  => {}
-            Ok(Message::NotificationV2 { .. })  => {}
-            Ok(Message::NotificationV2Update { .. })  => {}
-            Ok(Message::NotificationV2Delete { .. })  => {}
-            Ok(Message::ContentRefresh { .. })  => {}
-            Ok(Message::InstanceQueueJoined { .. })  => {}
-            Ok(Message::InstanceQueueReady { .. })  => {}
-            Ok(Message::GroupJoined { .. })  => {}
-            Ok(Message::GroupLeft { .. })  => {}
-            Ok(Message::GroupMemberUpdated { .. })  => {}
-            Ok(Message::GroupRoleUpdated { .. })  => {}
+            Ok(WebsocketMessage::UserUpdate { .. }) => {}
+            Ok(WebsocketMessage::UserLocation { .. }) => {}
+            Ok(WebsocketMessage::UserBadgeAssigned { .. }) => {}
+            Ok(WebsocketMessage::UserBadgeUnassigned { .. }) => {}
+            Ok(WebsocketMessage::Notification { .. })  => {}
+            Ok(WebsocketMessage::ResponseNotification { .. })  => {}
+            Ok(WebsocketMessage::SeeNotification { .. })  => {}
+            Ok(WebsocketMessage::HideNotification { .. })  => {}
+            Ok(WebsocketMessage::ClearNotification { .. })  => {}
+            Ok(WebsocketMessage::NotificationV2 { .. })  => {}
+            Ok(WebsocketMessage::NotificationV2Update { .. })  => {}
+            Ok(WebsocketMessage::NotificationV2Delete { .. })  => {}
+            Ok(WebsocketMessage::ContentRefresh { .. })  => {}
+            Ok(WebsocketMessage::InstanceQueueJoined { .. })  => {}
+            Ok(WebsocketMessage::InstanceQueueReady { .. })  => {}
+            Ok(WebsocketMessage::GroupJoined { .. })  => {}
+            Ok(WebsocketMessage::GroupLeft { .. })  => {}
+            Ok(WebsocketMessage::GroupMemberUpdated { .. })  => {}
+            Ok(WebsocketMessage::GroupRoleUpdated { .. })  => {}
             Err(WSElementError::SerdeJson {error, message}) => {
                 let dc = self.dc.clone();
                 let id = self.owner;
@@ -261,6 +265,25 @@ impl vrc::websocket::connection::WSHandler for tokio::sync::OwnedMutexGuard<Hand
             Err(err) => {
                 log::error!("failed receiving ws element: {err}")
             },
+            Ok(WebsocketMessage::WebsocketMessageUnknown(data)) => {
+                let dc = self.dc.clone();
+                let id = self.owner;
+                let data = vec![
+                    serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new("# Failed to Deserialize Websocket Message")),
+                    serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Data in Debug: `{data:?}`"))),
+                    serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Data: ```\n{:?}\n```", serde_json::to_string(&data)))),
+                ];
+                let body = serenity::builder::CreateMessage::new()
+                    .flags(serenity::model::channel::MessageFlags::IS_COMPONENTS_V2)
+                    .components(vec![
+                        serenity::builder::CreateComponent::Container(serenity::builder::CreateContainer::new(data))
+                    ]);
+                tokio::task::spawn(async move {
+                    if let Err(err) = id.direct_message(dc, body).await {
+                        log::error!("Failed to send message to {id}: {err}")
+                    }
+                });
+            }
         }
     }
 }

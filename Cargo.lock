@@ -2497,7 +2497,6 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "serde_with",
  "serenity",
  "simple_logger",
  "thiserror",
@@ -2510,9 +2509,9 @@ dependencies = [
 
 [[package]]
 name = "vrchatapi"
-version = "1.21.1-nightly.71"
+version = "1.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba3c78b7b34746c04e87443511e15103790e6d528bc2572155f5f65af8a1f37d"
+checksum = "81fce73e79d3310ea2a0847134433e01605fa0e43b2f99e2b6b35a88db0492a8"
 dependencies = [
  "chrono",
  "log",
