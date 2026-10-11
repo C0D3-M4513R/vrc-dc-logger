@@ -26,7 +26,7 @@ pub enum StartWSError{
     WebSys(String),
 }
 pub trait WSHandler{
-    fn handler(&mut self, message:Result<vrchatapi::models::websocket_message::WebsocketMessage, WSElementError>);
+    fn handler(&mut self, message:Result<(tokio_websockets::proto::Message, vrchatapi::models::websocket_message::WebsocketMessage), WSElementError>);
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -36,6 +36,7 @@ mod tokio_websocket{
     use core::task::Context;
     use core::pin::Pin;
     use core::task::Poll;
+    use std::ops::Deref;
     use std::sync::Arc;
     use std::time::Duration;
     use futures::StreamExt;
@@ -119,7 +120,7 @@ mod tokio_websocket{
         }
     }
     impl futures::Stream for TokioWebspocket {
-        type Item = Result<vrchatapi::models::websocket_message::WebsocketMessage, super::WSElementError>;
+        type Item = Result<(tokio_websockets::proto::Message, vrchatapi::models::websocket_message::WebsocketMessage), super::WSElementError>;
 
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
             let mut pinned = std::pin::pin!(&mut self.ws);
@@ -135,7 +136,7 @@ mod tokio_websocket{
                             Poll::Pending
                         }else{
                             match serde_json::from_slice(message_content) {
-                                Ok(message) => Poll::Ready(Some(Ok(message))),
+                                Ok(ws_message) => Poll::Ready(Some(Ok((message, ws_message)))),
                                 Err(err) => {
                                     if let Some(text) = message.as_text(){
                                         log::error!("Failed to decode Websocket message: error:{err}, message: {text}", );

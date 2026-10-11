@@ -2487,6 +2487,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "cookie_store",
+ "data-encoding",
  "dotenvy",
  "futures",
  "http",
