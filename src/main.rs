@@ -235,11 +235,13 @@ impl vrc::websocket::WSHandler for tokio::sync::OwnedMutexGuard<Handler> {
         };
         {
             let ws_file = self.ws_log_file.clone();
+            let data = {
+                let mut data = data_encoding::BASE64.encode(raw_message.as_payload().as_ref());
+                data.push('\n');
+                data
+            };
             tokio::task::spawn(async move {
                 let mut file = ws_file.lock().await;
-                let msg = raw_message;
-                let mut data = data_encoding::BASE64.encode(msg.as_payload().as_ref());
-                data.push('\n');
                 if let Err(err) = file.write_all(data.as_bytes()).await {
                     log::error!("Failed to write ws data to log. Error: {err}, data: {data}");
                     let _ = file.write_all(&[0]).await;
@@ -303,7 +305,11 @@ impl vrc::websocket::WSHandler for tokio::sync::OwnedMutexGuard<Handler> {
                 let data = vec![
                     serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new("# Failed to Deserialize Websocket Message")),
                     serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Data in Debug: `{data:?}`"))),
-                    serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Data: ```\n{:?}\n```", serde_json::to_string(&data)))),
+                    match serde_json::to_string(&data) {
+                        Ok(v) => serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Data Deserialized: ```\n{v}\n```", ))),
+                        Err(err) => serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Data Deserialized: Error: `{err}`", ))),
+                    },
+                    serenity::builder::CreateContainerComponent::TextDisplay(serenity::builder::CreateTextDisplay::new(format!("Raw Data: ```\n{}\n```", String::from_utf8_lossy(raw_message.as_payload().as_ref()))))
                 ];
                 let body = serenity::builder::CreateMessage::new()
                     .flags(serenity::model::channel::MessageFlags::IS_COMPONENTS_V2)
